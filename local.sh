@@ -14,17 +14,9 @@ else
 fi
 MYSQL_USER=${MYSQL_USER:-root}
 BM_PXE_INTERFACE=${BM_PXE_INTERFACE:-eth1}
-BM_PXE_PER_NODE=`trueorfalse False $BM_PXE_PER_NODE`
 
-$NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal.small --cpu=1 --memory=2048 --root_gb=10 --ephemeral_gb=20 --swap=1024 --rxtx_factor=1
-$NOVA_BIN_DIR/nova-manage instance_type set_key --name=baremetal.small --key cpu_arch --value x86_64
-
-$NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal.medium --cpu=1 --memory=4096 --root_gb=10 --ephemeral_gb=20 --swap=1024 --rxtx_factor=1
-$NOVA_BIN_DIR/nova-manage instance_type set_key --name=baremetal.medium --key cpu_arch --value x86_64
-
-$NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal.minimum --cpu=1 --memory=1 --root_gb=1 --ephemeral_gb=0 --swap=1 --rxtx_factor=1
-$NOVA_BIN_DIR/nova-manage instance_type set_key --name=baremetal.minimum --key cpu_arch --value x86_64
-
+$NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal --cpu=1 --memory=1 --root_gb=10 --ephemeral_gb=20 --flavor=6 --swap=1024 --rxtx_factor=1
+$NOVA_BIN_DIR/nova-manage instance_type set_key --name=baremetal --key cpu_arch --value i686
 
 apt_get install dnsmasq syslinux ipmitool qemu-kvm open-iscsi
 
@@ -40,7 +32,7 @@ KERNEL_=/boot/vmlinuz-$KERNEL_VER
 KERNEL=/tmp/deploy-kernel
 sudo cp "$KERNEL_" "$KERNEL"
 sudo chmod a+r "$KERNEL"
-RAMDISK=/tmp/deploy-ramdisk.img
+RAMDISK=/home/ubuntu/deploy-ramdisk.img
 
 if [ ! -f "$RAMDISK" ]; then
 (
@@ -60,15 +52,34 @@ echo "$RAMDISK_ID"
 
 echo "building ubuntu image"
 IMG=$DEST/ubuntu.img
-./build-ubuntu-image.sh "$IMG" "$DEST"
+
+if ! [ -f "$IMG" ]; then
+    if ! [ -f $DEST/precise-server-cloudimg-amd32-root.tar.gz ]; then
+        wget http://cloud-images.ubuntu.com/precise/current/precise-server-cloudimg-i386-root.tar.gz -O - > $DEST/precise-server-cloudimg-amd32-root.tar.gz
+    fi
+    dd if=/dev/zero of="$IMG" bs=1M count=0 seek=1024
+    mkfs -F -t ext4 "$IMG"
+    sudo mount -o loop "$IMG" /mnt/
+    sudo tar -C /mnt -xzf $DEST/precise-server-cloudimg-amd32-root.tar.gz
+    sudo mv /mnt/etc/resolv.conf /mnt/etc/resolv.conf_orig
+    sudo cp /etc/resolv.conf /mnt/etc/resolv.conf
+    sudo chroot /mnt apt-get -y install linux-image-3.2.0-24-generic vlan open-iscsi
+    sudo chroot /mnt passwd ubuntu < /home/savi/passfile
+    sudo mv /mnt/etc/resolv.conf_orig /mnt/etc/resolv.conf
+    sudo cp /mnt/boot/vmlinuz-3.2.0-24-generic $DEST/kernel
+    sudo chmod a+r $DEST/kernel
+    cp /mnt/boot/initrd.img-3.2.0-24-generic $DEST/initrd
+    sudo umount /mnt
+fi
 
 REAL_KERNEL_ID=$(glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "baremetal-real-kernel" --public --container-format aki --disk-format aki < "$DEST/kernel" | grep ' id ' | get_field 2)
 
-REAL_RAMDISK_ID=$(glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "baremetal-deployment-ramdisk" --public --container-format ari --disk-format ari < "$DEST/initrd" | grep ' id ' | get_field 2)
+REAL_RAMDISK_ID=$(glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "baremetal-real-ramdisk" --public --container-format ari --disk-format ari < "$DEST/initrd" | grep ' id ' | get_field 2)
 
 glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "Ubuntu" --public --container-format bare --disk-format raw --property kernel_id=$REAL_KERNEL_ID --property ramdisk_id=$REAL_RAMDISK_ID < "$IMG"
 
 TFTPROOT=$DEST/tftproot
+#TFTPROOT=/var/lib/tftproot
 
 if [ -d "$TFTPROOT" ]; then
     rm -r "$TFTPROOT"
@@ -84,9 +95,8 @@ if [ -f "$DNSMASQ_PID" ]; then
 fi
 sudo /etc/init.d/dnsmasq stop
 sudo sudo update-rc.d dnsmasq disable
-if [ "$BM_PXE_PER_NODE" = "False" ]; then
-    sudo dnsmasq --conf-file= --port=0 --enable-tftp --tftp-root=$TFTPROOT --dhcp-boot=pxelinux.0 --bind-interfaces --pid-file=$DNSMASQ_PID --interface=$BM_PXE_INTERFACE --dhcp-range=192.168.175.100,192.168.175.254
-fi
+#sudo dnsmasq --conf-file= --port=0 --enable-tftp --tftp-root=$TFTPROOT --dhcp-boot=pxelinux.0 --bind-interfaces --pid-file=$DNSMASQ_PID --interface=$BM_PXE_INTERFACE --dhcp-range=192.168.175.100,192.168.175.254
+sudo dnsmasq --conf-file= --port=0 --enable-tftp --tftp-root=$TFTPROOT --dhcp-boot=pxelinux.0 --bind-interfaces --pid-file=$DNSMASQ_PID --interface=$BM_PXE_INTERFACE --dhcp-range=10.10.50.20,10.10.50.254
 
 
 mkdir -p $NOVA_DIR/baremetal/console
@@ -102,25 +112,17 @@ is baremetal_sql_connection mysql://$MYSQL_USER:$MYSQL_PASSWORD@127.0.0.1/nova_b
 is compute_driver nova.virt.baremetal.driver.BareMetalDriver
 is baremetal_driver nova.virt.baremetal.pxe.PXE
 is power_manager nova.virt.baremetal.ipmi.Ipmi
-is instance_type_extra_specs cpu_arch:x86_64
+is instance_type_extra_specs cpu_arch:i686
 is baremetal_tftp_root $TFTPROOT
 #is baremetal_term /usr/local/bin/shellinaboxd
-is baremetal_dnsmasq_pid_dir $NOVA_DIR/baremetal/dnsmasq
-is baremetal_dnsmasq_lease_dir $NOVA_DIR/baremetal/dnsmasq
 is baremetal_deploy_kernel $KERNEL_ID
 is baremetal_deploy_ramdisk $RAMDISK_ID
 is scheduler_host_manager nova.scheduler.baremetal_host_manager.BaremetalHostManager
-is baremetal_pxe_vlan_per_host $BM_PXE_PER_NODE
-is baremetal_pxe_parent_interface $BM_PXE_INTERFACE
 
 mysql -u$MYSQL_USER -p$MYSQL_PASSWORD -e 'DROP DATABASE IF EXISTS nova_bm;'
 mysql -u$MYSQL_USER -p$MYSQL_PASSWORD -e 'CREATE DATABASE nova_bm CHARACTER SET latin1;'
 
-# workaround for invalid compute_node that non-bare-metal nova-compute has left
-mysql -u$MYSQL_USER -p$MYSQL_PASSWORD nova -e 'DELETE FROM compute_nodes;'
-
 $NOVA_BIN_DIR/nova-bm-manage db sync
-$NOVA_BIN_DIR/nova-bm-manage pxe_ip create --cidr 192.168.175.0/24
 
 if [ -f ./bm-nodes.sh ]; then
     . ./bm-nodes.sh
