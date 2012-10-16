@@ -29,9 +29,9 @@ apt_get install dnsmasq syslinux ipmitool qemu-kvm open-iscsi snmp
 
 apt_get install busybox tgt
 
-BMIB_REPO=https://github.com/NTTdocomo-openstack/baremetal-initrd-builder.git
+BMIB_REPO=https://github.com/hesamrahimi/baremetal-initrd-builder.git
 BMIB_DIR=$DEST/barematal-initrd-builder
-BMIB_BRANCH=master
+BMIB_BRANCH=silver
 git_clone $BMIB_REPO $BMIB_DIR $BMIB_BRANCH
 
 KERNEL_VER=`uname -r`
