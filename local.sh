@@ -120,7 +120,9 @@ BMC_HOST=bmc-$BMC_HOST
 is baremetal_sql_connection mysql://$MYSQL_USER:$MYSQL_PASSWORD@127.0.0.1/nova_bm
 is compute_driver nova.virt.baremetal.driver.BareMetalDriver
 is baremetal_driver nova.virt.baremetal.pxe.PXE
-is power_manager nova.virt.baremetal.ipmi.Ipmi
+is power_manager nova.virt.baremetal.ipmi-fake.Ipmi
+#comment the above line and uncomment the next line if you want to use netbooter
+#is power_manager nova.virt.baremetal.snmp.SnmpNetBoot
 is instance_type_extra_specs cpu_arch:i686
 is baremetal_tftp_root $TFTPROOT
 #is baremetal_term /usr/local/bin/shellinaboxd
