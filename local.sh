@@ -14,11 +14,18 @@ else
 fi
 MYSQL_USER=${MYSQL_USER:-root}
 BM_PXE_INTERFACE=${BM_PXE_INTERFACE:-eth1}
+BM_PXE_PER_NODE=`trueorfalse False $BM_PXE_PER_NODE`
 
-$NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal --cpu=1 --memory=1 --root_gb=10 --ephemeral_gb=20 --flavor=6 --swap=1024 --rxtx_factor=1
-$NOVA_BIN_DIR/nova-manage instance_type set_key --name=baremetal --key cpu_arch --value i686
+$NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal.small --cpu=1 --memory=2048 --root_gb=6 --ephemeral_gb=20 --swap=1024 --rxtx_factor=1
+$NOVA_BIN_DIR/nova-manage instance_type set_key --name=baremetal.small --key cpu_arch --value x86_64
 
-apt_get install dnsmasq syslinux ipmitool qemu-kvm open-iscsi
+$NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal.medium --cpu=1 --memory=4096 --root_gb=6 --ephemeral_gb=20 --swap=1024 --rxtx_factor=1
+$NOVA_BIN_DIR/nova-manage instance_type set_key --name=baremetal.medium --key cpu_arch --value x86_64
+
+$NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal.minimum --cpu=1 --memory=1 --root_gb=6 --ephemeral_gb=0 --swap=1 --rxtx_factor=1
+$NOVA_BIN_DIR/nova-manage instance_type set_key --name=baremetal.minimum --key cpu_arch --value x86_64
+
+apt_get install dnsmasq syslinux ipmitool qemu-kvm open-iscsi snmp
 
 apt_get install busybox tgt
 
@@ -29,10 +36,10 @@ git_clone $BMIB_REPO $BMIB_DIR $BMIB_BRANCH
 
 KERNEL_VER=`uname -r`
 KERNEL_=/boot/vmlinuz-$KERNEL_VER
-KERNEL=/tmp/deploy-kernel
+KERNEL=~/deploy-kernel
 sudo cp "$KERNEL_" "$KERNEL"
 sudo chmod a+r "$KERNEL"
-RAMDISK=/home/ubuntu/deploy-ramdisk.img
+RAMDISK=~/deploy-ramdisk.img
 
 if [ ! -f "$RAMDISK" ]; then
 (
@@ -53,24 +60,7 @@ echo "$RAMDISK_ID"
 echo "building ubuntu image"
 IMG=$DEST/ubuntu.img
 
-if ! [ -f "$IMG" ]; then
-    if ! [ -f $DEST/precise-server-cloudimg-amd32-root.tar.gz ]; then
-        wget http://cloud-images.ubuntu.com/precise/current/precise-server-cloudimg-i386-root.tar.gz -O - > $DEST/precise-server-cloudimg-amd32-root.tar.gz
-    fi
-    dd if=/dev/zero of="$IMG" bs=1M count=0 seek=1024
-    mkfs -F -t ext4 "$IMG"
-    sudo mount -o loop "$IMG" /mnt/
-    sudo tar -C /mnt -xzf $DEST/precise-server-cloudimg-amd32-root.tar.gz
-    sudo mv /mnt/etc/resolv.conf /mnt/etc/resolv.conf_orig
-    sudo cp /etc/resolv.conf /mnt/etc/resolv.conf
-    sudo chroot /mnt apt-get -y install linux-image-3.2.0-24-generic vlan open-iscsi
-    sudo chroot /mnt passwd ubuntu < /home/savi/passfile
-    sudo mv /mnt/etc/resolv.conf_orig /mnt/etc/resolv.conf
-    sudo cp /mnt/boot/vmlinuz-3.2.0-24-generic $DEST/kernel
-    sudo chmod a+r $DEST/kernel
-    cp /mnt/boot/initrd.img-3.2.0-24-generic $DEST/initrd
-    sudo umount /mnt
-fi
+./build-ubuntu-image.sh "$IMG" "$DEST"
 
 REAL_KERNEL_ID=$(glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "baremetal-real-kernel" --public --container-format aki --disk-format aki < "$DEST/kernel" | grep ' id ' | get_field 2)
 
@@ -79,7 +69,6 @@ REAL_RAMDISK_ID=$(glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HO
 glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "Ubuntu" --public --container-format bare --disk-format raw --property kernel_id=$REAL_KERNEL_ID --property ramdisk_id=$REAL_RAMDISK_ID < "$IMG"
 
 TFTPROOT=$DEST/tftproot
-#TFTPROOT=/var/lib/tftproot
 
 if [ -d "$TFTPROOT" ]; then
     rm -r "$TFTPROOT"
@@ -95,18 +84,38 @@ if [ -f "$DNSMASQ_PID" ]; then
 fi
 sudo /etc/init.d/dnsmasq stop
 sudo sudo update-rc.d dnsmasq disable
-#sudo dnsmasq --conf-file= --port=0 --enable-tftp --tftp-root=$TFTPROOT --dhcp-boot=pxelinux.0 --bind-interfaces --pid-file=$DNSMASQ_PID --interface=$BM_PXE_INTERFACE --dhcp-range=192.168.175.100,192.168.175.254
-sudo dnsmasq --conf-file= --port=0 --enable-tftp --tftp-root=$TFTPROOT --dhcp-boot=pxelinux.0 --bind-interfaces --pid-file=$DNSMASQ_PID --interface=$BM_PXE_INTERFACE --dhcp-range=10.10.50.20,10.10.50.254
-
+if [ "$BM_PXE_PER_NODE" = "False" ]; then
+    sudo dnsmasq --conf-file= --port=0 --enable-tftp --tftp-root=$TFTPROOT --dhcp-boot=pxelinux.0 --bind-interfaces --pid-file=$DNSMASQ_PID --interface=$BM_PXE_INTERFACE --dhcp-range=10.10.41.150,10.10.41.254
+fi
 
 mkdir -p $NOVA_DIR/baremetal/console
 mkdir -p $NOVA_DIR/baremetal/dnsmasq
 
-inicomment /etc/nova/nova.conf DEFAULT firewall_driver
+OWNER=`whoami`
+BM_CONF=/etc/nova-bm
 
-function is() {
+if [ -d "$BM_CONF" ]; then
+ echo "nova-bm conf dir exist"
+ sudo rm "$BM_CONF" -rf
+fi
+
+sudo mkdir $BM_CONF
+sudo chown $OWNER:root $BM_CONF -R
+
+sudo cp -p /etc/nova/* $BM_CONF -rf
+
+inicomment $BM_CONF/nova.conf DEFAULT firewall_driver
+
+function iso() {
     iniset /etc/nova/nova.conf DEFAULT "$1" "$2"
 }
+
+function is() {
+    iniset $BM_CONF/nova.conf DEFAULT "$1" "$2"
+}
+
+BMC_HOST=`hostname -f`
+BMC_HOST=bmc-$BMC_HOST
 
 is baremetal_sql_connection mysql://$MYSQL_USER:$MYSQL_PASSWORD@127.0.0.1/nova_bm
 is compute_driver nova.virt.baremetal.driver.BareMetalDriver
@@ -118,11 +127,20 @@ is baremetal_tftp_root $TFTPROOT
 is baremetal_deploy_kernel $KERNEL_ID
 is baremetal_deploy_ramdisk $RAMDISK_ID
 is scheduler_host_manager nova.scheduler.baremetal_host_manager.BaremetalHostManager
+iso scheduler_host_manager nova.scheduler.baremetal_host_manager.BaremetalHostManager
+is baremetal_pxe_vlan_per_host $BM_PXE_PER_NODE
+is baremetal_pxe_parent_interface $BM_PXE_INTERFACE
+is firewall_driver ""
+is host $BMC_HOST
 
 mysql -u$MYSQL_USER -p$MYSQL_PASSWORD -e 'DROP DATABASE IF EXISTS nova_bm;'
 mysql -u$MYSQL_USER -p$MYSQL_PASSWORD -e 'CREATE DATABASE nova_bm CHARACTER SET latin1;'
 
-$NOVA_BIN_DIR/nova-bm-manage db sync
+# workaround for invalid compute_node that non-bare-metal nova-compute has left
+mysql -u$MYSQL_USER -p$MYSQL_PASSWORD nova -e 'DELETE FROM compute_nodes;'
+
+$NOVA_BIN_DIR/nova-bm-manage --config-dir=$BM_CONF db sync
+$NOVA_BIN_DIR/nova-bm-manage --config-dir=$BM_CONF pxe_ip create --cidr 10.10.41.0/24
 
 if [ -f ./bm-nodes.sh ]; then
     . ./bm-nodes.sh
@@ -135,15 +153,24 @@ screen -S stack -p n-sch -X kill
 screen -S stack -X screen -t n-sch
 sleep 1.5
 screen -S stack -p n-sch -X stuff "cd $NOVA_DIR && $NOVA_BIN_DIR/nova-scheduler $NL"
+sleep 5
 
 echo "restarting nova-compute"
 screen -S stack -p n-cpu -X kill
 screen -S stack -X screen -t n-cpu
 sleep 1.5
-screen -S stack -p n-cpu -X stuff "cd $NOVA_DIR && sg libvirtd $NOVA_BIN_DIR/nova-compute $NL"
+screen -S stack -p n-cpu -X stuff "cd $NOVA_DIR && sg libvirtd \"$NOVA_BIN_DIR/nova-compute --config-dir=/etc/nova\" $NL"
 
 echo "starting bm_deploy_server"
 screen -S stack -p n-bmd -X kill
 screen -S stack -X screen -t n-bmd
 sleep 1.5
-screen -S stack -p n-bmd -X stuff "cd $NOVA_DIR && $NOVA_BIN_DIR/bm_deploy_server $NL"
+screen -S stack -p n-bmd -X stuff "cd $NOVA_DIR && $NOVA_BIN_DIR/bm_deploy_server --config-dir=$BM_CONF $NL"
+
+echo "creating baremetal nova-compute"
+screen -S stack -p n-cpu-bm -X kill
+screen -S stack -X screen -t n-cpu-bm
+sleep 1.5
+screen -S stack -p n-cpu-bm -X stuff "cd $NOVA_DIR && sg libvirtd \"$NOVA_BIN_DIR/nova-compute --config-dir=$BM_CONF\" $NL"
+
+echo "done baremetal local.sh"

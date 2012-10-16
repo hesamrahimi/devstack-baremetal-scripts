@@ -3,6 +3,14 @@
 IMG=$1
 CACHE_DIR=$2
 
+UBUNTU_PASS=savi
+PASS_FILE=$CACHE_DIR/passfile
+
+touch $PASS_FILE
+echo $UBUNTU_PASS > $PASS_FILE
+echo $UBUNTU_PASS >> $PASS_FILE
+echo "\n" >> $PASS_FILE
+
 SRC_URL=http://cloud-images.ubuntu.com/precise/current/precise-server-cloudimg-amd64-root.tar.gz
 SRC_CACHE=$CACHE_DIR/precise-server-cloudimg-amd64-root.tar.gz
 
@@ -22,6 +30,7 @@ sudo tar -C "${MNT_DIR}" -xzf "$SRC_CACHE"
 sudo mv "${MNT_DIR}/etc/resolv.conf" "${MNT_DIR}/etc/resolv.conf_orig"
 sudo cp /etc/resolv.conf "${MNT_DIR}/etc/resolv.conf"
 sudo chroot "${MNT_DIR}" apt-get -y install linux-image-3.2.0-26-generic vlan open-iscsi
+sudo chroot "${MNT_DIR}" passwd ubuntu < $PASS_FILE
 sudo mv "${MNT_DIR}/etc/resolv.conf_orig" "${MNT_DIR}/etc/resolv.conf"
 sudo cp "${MNT_DIR}/boot/vmlinuz-3.2.0-26-generic" "$CACHE_DIR/kernel"
 sudo chmod a+r "$CACHE_DIR/kernel"
