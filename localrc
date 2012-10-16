@@ -6,8 +6,8 @@ ADMIN_PASSWORD=supersecret
 
 FLOATING_RANGE=10.10.30.224/28
 
-NOVA_REPO=https://github.com/NTTdocomo-openstack/nova.git
-NOVA_BRANCH=master
+NOVA_REPO=https://github.com/hesamrahimi/nova.git
+NOVA_BRANCH=silver
 #NOVA_BRANCH=nodes-in-caps
 #NOVA_BRANCH=multinode
 #NOVA_BRANCH=multinode-hypervisor_hostname
