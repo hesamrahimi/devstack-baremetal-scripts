@@ -16,14 +16,23 @@ MYSQL_USER=${MYSQL_USER:-root}
 BM_PXE_INTERFACE=${BM_PXE_INTERFACE:-eth1}
 BM_PXE_PER_NODE=`trueorfalse False $BM_PXE_PER_NODE`
 
-$NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal.small --cpu=1 --memory=2048 --root_gb=6 --ephemeral_gb=20 --swap=1024 --rxtx_factor=1
+$NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal.small --cpu=2 --memory=2048 --root_gb=40 --ephemeral_gb=20 --swap=2048 --rxtx_factor=1
 $NOVA_BIN_DIR/nova-manage instance_type set_key --name=baremetal.small --key cpu_arch --value x86_64
 
-$NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal.medium --cpu=1 --memory=4096 --root_gb=6 --ephemeral_gb=20 --swap=1024 --rxtx_factor=1
+$NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal.medium --cpu=1 --memory=4096 --root_gb=40 --ephemeral_gb=20 --swap=2048 --rxtx_factor=1
 $NOVA_BIN_DIR/nova-manage instance_type set_key --name=baremetal.medium --key cpu_arch --value x86_64
 
-$NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal.minimum --cpu=1 --memory=1 --root_gb=6 --ephemeral_gb=0 --swap=1 --rxtx_factor=1
+$NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal.minimum --cpu=1 --memory=1 --root_gb=40 --ephemeral_gb=0 --swap=2048 --rxtx_factor=1
 $NOVA_BIN_DIR/nova-manage instance_type set_key --name=baremetal.minimum --key cpu_arch --value x86_64
+
+$NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal32.minimum --cpu=1 --memory=1 --root_gb=40 --ephemeral_gb=0 --swap=2048 --rxtx_factor=1
+$NOVA_BIN_DIR/nova-manage instance_type set_key --name=baremetal32.minimum --key cpu_arch --value i686
+
+$NOVA_BIN_DIR/nova-manage instance_type set_key --name=m1.tiny --key cpu_arch --value virtual
+$NOVA_BIN_DIR/nova-manage instance_type set_key --name=m1.small --key cpu_arch --value virtual
+$NOVA_BIN_DIR/nova-manage instance_type set_key --name=m1.medium --key cpu_arch --value virtual
+$NOVA_BIN_DIR/nova-manage instance_type set_key --name=m1.large --key cpu_arch --value virtual
+$NOVA_BIN_DIR/nova-manage instance_type set_key --name=m1.xlarge --key cpu_arch --value virtual
 
 apt_get install dnsmasq syslinux ipmitool qemu-kvm open-iscsi snmp
 
@@ -34,15 +43,15 @@ BMIB_DIR=$DEST/barematal-initrd-builder
 BMIB_BRANCH=silver
 git_clone $BMIB_REPO $BMIB_DIR $BMIB_BRANCH
 
-KERNEL_VER=`uname -r`
-KERNEL_=/boot/vmlinuz-$KERNEL_VER
-KERNEL=~/deploy-kernel
-sudo cp "$KERNEL_" "$KERNEL"
-sudo chmod a+r "$KERNEL"
-RAMDISK=~/deploy-ramdisk.img
+KERNEL=~/deploy_kernel
+RAMDISK=~/deploy_ramdisk
 
 if [ ! -f "$RAMDISK" ]; then
 (
+        KERNEL_VER=`uname -r`
+        KERNEL_=/boot/vmlinuz-$KERNEL_VER
+        sudo cp "$KERNEL_" "$KERNEL"
+        sudo chmod a+r "$KERNEL"
 	cd "$BMIB_DIR"
         ./baremetal-mkinitrd.sh "$RAMDISK" "$KERNEL_VER"
 )
@@ -67,6 +76,19 @@ REAL_KERNEL_ID=$(glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOS
 REAL_RAMDISK_ID=$(glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "baremetal-real-ramdisk" --public --container-format ari --disk-format ari < "$DEST/initrd" | grep ' id ' | get_field 2)
 
 glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "Ubuntu" --public --container-format bare --disk-format raw --property kernel_id=$REAL_KERNEL_ID --property ramdisk_id=$REAL_RAMDISK_ID < "$IMG"
+
+
+KERNEL_32=~/kernel32
+RAMDISK_32=~/ramdisk32
+IMG_32=~/ubuntu32.img
+
+REAL_KERNEL_ID=$(glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "baremetal-32-real-kernel" --public --container-format aki --disk-format aki < "$KERNEL_32" | grep ' id ' | get_field 2)
+
+REAL_RAMDISK_ID=$(glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "baremetal-32-real-ramdisk" --public --container-format ari --disk-format ari < "$RAMDISK_32" | grep ' id ' | get_field 2)
+
+glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "Ubuntu32" --public --container-format bare --disk-format raw --property kernel_id=$REAL_KERNEL_ID --property ramdisk_id=$REAL_RAMDISK_ID < "$IMG_32"
+
+
 
 TFTPROOT=$DEST/tftproot
 
@@ -120,10 +142,10 @@ BMC_HOST=bmc-$BMC_HOST
 is baremetal_sql_connection mysql://$MYSQL_USER:$MYSQL_PASSWORD@127.0.0.1/nova_bm
 is compute_driver nova.virt.baremetal.driver.BareMetalDriver
 is baremetal_driver nova.virt.baremetal.pxe.PXE
-is power_manager nova.virt.baremetal.ipmi-fake.Ipmi
+#is power_manager nova.virt.baremetal.ipmi-fake.Ipmi
 #comment the above line and uncomment the next line if you want to use netbooter
-#is power_manager nova.virt.baremetal.snmp.SnmpNetBoot
-is instance_type_extra_specs cpu_arch:i686
+is power_manager nova.virt.baremetal.snmp.SnmpNetBoot
+is instance_type_extra_specs cpu_arch:x86_64
 is baremetal_tftp_root $TFTPROOT
 #is baremetal_term /usr/local/bin/shellinaboxd
 is baremetal_deploy_kernel $KERNEL_ID
@@ -134,6 +156,7 @@ is baremetal_pxe_vlan_per_host $BM_PXE_PER_NODE
 is baremetal_pxe_parent_interface $BM_PXE_INTERFACE
 is firewall_driver ""
 is host $BMC_HOST
+iso host `hostname -f`
 
 mysql -u$MYSQL_USER -p$MYSQL_PASSWORD -e 'DROP DATABASE IF EXISTS nova_bm;'
 mysql -u$MYSQL_USER -p$MYSQL_PASSWORD -e 'CREATE DATABASE nova_bm CHARACTER SET latin1;'
@@ -154,7 +177,7 @@ echo "restarting nova-scheduler"
 screen -S stack -p n-sch -X kill
 screen -S stack -X screen -t n-sch
 sleep 1.5
-screen -S stack -p n-sch -X stuff "cd $NOVA_DIR && $NOVA_BIN_DIR/nova-scheduler $NL"
+screen -S stack -p n-sch -X stuff "cd $NOVA_DIR && $NOVA_BIN_DIR/nova-scheduler --config-dir=$BM_CONF $NL"
 sleep 5
 
 echo "restarting nova-compute"
@@ -169,7 +192,7 @@ screen -S stack -X screen -t n-bmd
 sleep 1.5
 screen -S stack -p n-bmd -X stuff "cd $NOVA_DIR && $NOVA_BIN_DIR/bm_deploy_server --config-dir=$BM_CONF $NL"
 
-echo "creating baremetal nova-compute"
+echo "starting baremetal nova-compute"
 screen -S stack -p n-cpu-bm -X kill
 screen -S stack -X screen -t n-cpu-bm
 sleep 1.5
