@@ -15,7 +15,11 @@ SRC_URL=http://cloud-images.ubuntu.com/precise/current/precise-server-cloudimg-a
 SRC_CACHE=$CACHE_DIR/precise-server-cloudimg-amd64-root.tar.gz
 
 if [ -f "$IMG" ]; then
+if [ -f "$CACHE_DIR/kernel" ]; then
+if [ -f "$CACHE_DIR/initrd" ]; then
     exit 0
+fi
+fi
 fi
 
 if ! [ -f "$SRC_CACHE" ]; then

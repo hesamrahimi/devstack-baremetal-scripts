@@ -1,7 +1,0 @@
-#!/bin/sh
-nova image-list
-nova image-list
-nova secgroup-add-rule default TCP 22 22 0.0.0.0/0
-nova secgroup-add-rule default ICMP -1 255 0.0.0.0/0
-nova keypair-add key1 --pub-key ~/.ssh/id_rsa.pub 
-nova keypair-list

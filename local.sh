@@ -28,6 +28,10 @@ $NOVA_BIN_DIR/nova-manage instance_type set_key --name=baremetal.minimum --key c
 $NOVA_BIN_DIR/nova-manage instance_type create --name=baremetal32.minimum --cpu=1 --memory=1 --root_gb=40 --ephemeral_gb=0 --swap=2048 --rxtx_factor=1
 $NOVA_BIN_DIR/nova-manage instance_type set_key --name=baremetal32.minimum --key cpu_arch --value i686
 
+$NOVA_BIN_DIR/nova-manage instance_type create --name=bee2 --cpu=1 --memory=1 --root_gb=40 --ephemeral_gb=0 --swap=2048 --rxtx_factor=1
+$NOVA_BIN_DIR/nova-manage instance_type set_key --name=bee2 --key cpu_arch --value bee2_board
+
+
 $NOVA_BIN_DIR/nova-manage instance_type set_key --name=m1.tiny --key cpu_arch --value virtual
 $NOVA_BIN_DIR/nova-manage instance_type set_key --name=m1.small --key cpu_arch --value virtual
 $NOVA_BIN_DIR/nova-manage instance_type set_key --name=m1.medium --key cpu_arch --value virtual
@@ -77,16 +81,19 @@ REAL_RAMDISK_ID=$(glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HO
 
 glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "Ubuntu" --public --container-format bare --disk-format raw --property kernel_id=$REAL_KERNEL_ID --property ramdisk_id=$REAL_RAMDISK_ID < "$IMG"
 
+IMAGE=/home/savi/devstack/fpga_image_adder
+glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "savi-fpga-image-adder" --public --container-format bare --disk-format raw < "${IMAGE}"
+
 
 KERNEL_32=~/kernel32
 RAMDISK_32=~/ramdisk32
 IMG_32=~/ubuntu32.img
 
-REAL_KERNEL_ID=$(glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "baremetal-32-real-kernel" --public --container-format aki --disk-format aki < "$KERNEL_32" | grep ' id ' | get_field 2)
+#REAL_KERNEL_ID=$(glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "baremetal-32-real-kernel" --public --container-format aki --disk-format aki < "$KERNEL_32" | grep ' id ' | get_field 2)
 
-REAL_RAMDISK_ID=$(glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "baremetal-32-real-ramdisk" --public --container-format ari --disk-format ari < "$RAMDISK_32" | grep ' id ' | get_field 2)
+#REAL_RAMDISK_ID=$(glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "baremetal-32-real-ramdisk" --public --container-format ari --disk-format ari < "$RAMDISK_32" | grep ' id ' | get_field 2)
 
-glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "Ubuntu32" --public --container-format bare --disk-format raw --property kernel_id=$REAL_KERNEL_ID --property ramdisk_id=$REAL_RAMDISK_ID < "$IMG_32"
+#glance --os-auth-token $TOKEN --os-image-url http://$GLANCE_HOSTPORT image-create --name "Ubuntu32" --public --container-format bare --disk-format raw --property kernel_id=$REAL_KERNEL_ID --property ramdisk_id=$REAL_RAMDISK_ID < "$IMG_32"
 
 
 
@@ -128,6 +135,21 @@ sudo cp -p /etc/nova/* $BM_CONF -rf
 
 inicomment $BM_CONF/nova.conf DEFAULT firewall_driver
 
+OWNER=`whoami`
+BEE2_CONF=/etc/nova-bee2
+
+if [ -d "$BEE2_CONF" ]; then
+ echo "nova-bee2 conf dir exist"
+ sudo rm "$BEE2_CONF" -rf
+fi
+
+sudo mkdir $BEE2_CONF
+sudo chown $OWNER:root $BEE2_CONF -R
+
+sudo cp -p /etc/nova/* $BEE2_CONF -rf
+
+inicomment $BEE2_CONF/nova.conf DEFAULT firewall_driver
+
 function iso() {
     iniset /etc/nova/nova.conf DEFAULT "$1" "$2"
 }
@@ -136,27 +158,54 @@ function is() {
     iniset $BM_CONF/nova.conf DEFAULT "$1" "$2"
 }
 
+function isb() {
+    iniset $BEE2_CONF/nova.conf DEFAULT "$1" "$2"
+}
+
 BMC_HOST=`hostname -f`
 BMC_HOST=bmc-$BMC_HOST
 
+BEE2_HOST=`hostname -f`
+BEE2_HOST=bee2-$BEE2_HOST
+
 is baremetal_sql_connection mysql://$MYSQL_USER:$MYSQL_PASSWORD@127.0.0.1/nova_bm
+isb baremetal_sql_connection mysql://$MYSQL_USER:$MYSQL_PASSWORD@127.0.0.1/nova_bm
 is compute_driver nova.virt.baremetal.driver.BareMetalDriver
+#isb compute_driver nova.virt.bee2.driver.BareMetalDriver
+isb compute_driver nova.virt.baremetal.driver.BareMetalDriver
 is baremetal_driver nova.virt.baremetal.pxe.PXE
-#is power_manager nova.virt.baremetal.ipmi-fake.Ipmi
+isb baremetal_driver nova.virt.bee2.pxe.PXE
+is power_manager nova.virt.baremetal.ipmi-fake.Ipmi
+isb power_manager nova.virt.bee2.ipmi-fake.Ipmi
 #comment the above line and uncomment the next line if you want to use netbooter
-is power_manager nova.virt.baremetal.snmp.SnmpNetBoot
+#is power_manager nova.virt.baremetal.snmp.SnmpNetBoot
 is instance_type_extra_specs cpu_arch:x86_64
+isb instance_type_extra_specs cpu_arch:bee2_board
 is baremetal_tftp_root $TFTPROOT
 #is baremetal_term /usr/local/bin/shellinaboxd
 is baremetal_deploy_kernel $KERNEL_ID
 is baremetal_deploy_ramdisk $RAMDISK_ID
 is scheduler_host_manager nova.scheduler.baremetal_host_manager.BaremetalHostManager
 iso scheduler_host_manager nova.scheduler.baremetal_host_manager.BaremetalHostManager
+isb scheduler_host_manager nova.scheduler.baremetal_host_manager.BaremetalHostManager
 is baremetal_pxe_vlan_per_host $BM_PXE_PER_NODE
 is baremetal_pxe_parent_interface $BM_PXE_INTERFACE
+is baremetal_injected_network_template /opt/stack/nova/nova/virt/baremetal/interfaces-vbox.template
 is firewall_driver ""
 is host $BMC_HOST
+isb host $BEE2_HOST
 iso host `hostname -f`
+
+
+isb baremetal_tftp_root $TFTPROOT
+#is baremetal_term /usr/local/bin/shellinaboxd
+isb baremetal_deploy_kernel $KERNEL_ID
+isb baremetal_deploy_ramdisk $RAMDISK_ID
+isb firewall_driver ""
+
+
+
+
 
 mysql -u$MYSQL_USER -p$MYSQL_PASSWORD -e 'DROP DATABASE IF EXISTS nova_bm;'
 mysql -u$MYSQL_USER -p$MYSQL_PASSWORD -e 'CREATE DATABASE nova_bm CHARACTER SET latin1;'
@@ -170,6 +219,11 @@ $NOVA_BIN_DIR/nova-bm-manage --config-dir=$BM_CONF pxe_ip create --cidr 10.10.41
 if [ -f ./bm-nodes.sh ]; then
     . ./bm-nodes.sh
 fi
+
+if [ -f ./bee2-nodes.sh ]; then
+    . ./bee2-nodes.sh
+fi
+
 
 NL=`echo -ne '\015'`
 
@@ -197,5 +251,13 @@ screen -S stack -p n-cpu-bm -X kill
 screen -S stack -X screen -t n-cpu-bm
 sleep 1.5
 screen -S stack -p n-cpu-bm -X stuff "cd $NOVA_DIR && sg libvirtd \"$NOVA_BIN_DIR/nova-compute --config-dir=$BM_CONF\" $NL"
+
+echo "starting bee2Board nova-compute"
+screen -S stack -p n-cpu-bee2 -X kill
+screen -S stack -X screen -t n-cpu-bee2
+sleep 1.5
+screen -S stack -p n-cpu-bee2 -X stuff "cd $NOVA_DIR && sg libvirtd \"$NOVA_BIN_DIR/nova-compute --config-dir=$BEE2_CONF\" $NL"
+
+
 
 echo "done baremetal local.sh"
