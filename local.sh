@@ -174,7 +174,7 @@ is compute_driver nova.virt.baremetal.driver.BareMetalDriver
 #isb compute_driver nova.virt.bee2.driver.BareMetalDriver
 isb compute_driver nova.virt.baremetal.driver.BareMetalDriver
 is baremetal_driver nova.virt.baremetal.pxe.PXE
-isb baremetal_driver nova.virt.bee2.pxe.PXE
+isb baremetal_driver nova.virt.bee2.bee2-board.BEE2
 is power_manager nova.virt.baremetal.ipmi-fake.Ipmi
 isb power_manager nova.virt.bee2.ipmi-fake.Ipmi
 #comment the above line and uncomment the next line if you want to use netbooter
