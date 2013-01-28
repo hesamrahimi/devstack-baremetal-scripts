@@ -14,19 +14,20 @@ echo "\n" >> $PASS_FILE
 SRC_URL=http://cloud-images.ubuntu.com/precise/current/precise-server-cloudimg-amd64-root.tar.gz
 SRC_CACHE=$CACHE_DIR/precise-server-cloudimg-amd64-root.tar.gz
 
+#SRC_URL=http://cloud-images.ubuntu.com/precise/current/precise-server-cloudimg-i386-root.tar.gz
+#SRC_CACHE=$CACHE_DIR/precise-server-cloudimg-i386-root.tar.gz
+
 if [ -f "$IMG" ]; then
-if [ -f "$CACHE_DIR/kernel" ]; then
-if [ -f "$CACHE_DIR/initrd" ]; then
     exit 0
-fi
-fi
 fi
 
 if ! [ -f "$SRC_CACHE" ]; then
     wget "$SRC_URL" -O - > "$SRC_CACHE"
 fi
 
-dd if=/dev/zero of="$IMG" bs=1M count=0 seek=1024
+#image size in MB
+IMAGE_SIZE=1750
+dd if=/dev/zero of="$IMG" bs=1M count=0 seek=$IMAGE_SIZE
 mkfs -F -t ext4 "$IMG"
 MNT_DIR=`mktemp -d`
 sudo mount -o loop "$IMG" "${MNT_DIR}"
